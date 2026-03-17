@@ -1,8 +1,18 @@
 import os
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from neo4j import GraphDatabase
 
 app = FastAPI(title="BibleGraph API", description="API pour le graphe de méditation biblique")
+
+# 🟢 AJOUT DU CORS ICI 🟢
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # Autorise tous les sites (on affinera en prod)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 USER = os.getenv("NEO4J_USER", "neo4j")
@@ -18,7 +28,6 @@ def read_root():
 def get_books():
     """Récupère la liste de tous les livres de la Bible"""
     with driver.session() as session:
-        # Requête Cypher pour récupérer les livres
         result = session.run("MATCH (b:Book) RETURN b.name AS name, b.testament AS testament")
         books = [{"name": record["name"], "testament": record["testament"]} for record in result]
         return {"books": books}
@@ -27,7 +36,6 @@ def get_books():
 def get_chapter(book_name: str, chapter_number: int):
     """Récupère tous les versets d'un chapitre spécifique"""
     with driver.session() as session:
-        # Requête Cypher pour traverser le graphe : Chapitre -> Versets
         query = """
         MATCH (c:Chapter {book: $book_name, number: $chapter_number})-[:CONTAINS]->(v:Verse)
         RETURN v.number AS number, v.text AS text
