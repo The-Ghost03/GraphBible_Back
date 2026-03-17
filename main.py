@@ -14,15 +14,36 @@ driver = GraphDatabase.driver(URI, auth=(USER, PASSWORD))
 def read_root():
     return {"message": "Bienvenue sur l'API BibleGraph 🚀"}
 
-@app.get("/test-db")
-def test_db_connection():
-    try:
-        with driver.session() as session:
-            result = session.run("RETURN 'Connexion à Neo4j réussie !' AS message")
-            record = result.single()
-            return {"status": "success", "neo4j_message": record["message"]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur de connexion à Neo4j : {str(e)}")
+@app.get("/books")
+def get_books():
+    """Récupère la liste de tous les livres de la Bible"""
+    with driver.session() as session:
+        # Requête Cypher pour récupérer les livres
+        result = session.run("MATCH (b:Book) RETURN b.name AS name, b.testament AS testament")
+        books = [{"name": record["name"], "testament": record["testament"]} for record in result]
+        return {"books": books}
+
+@app.get("/chapter/{book_name}/{chapter_number}")
+def get_chapter(book_name: str, chapter_number: int):
+    """Récupère tous les versets d'un chapitre spécifique"""
+    with driver.session() as session:
+        # Requête Cypher pour traverser le graphe : Chapitre -> Versets
+        query = """
+        MATCH (c:Chapter {book: $book_name, number: $chapter_number})-[:CONTAINS]->(v:Verse)
+        RETURN v.number AS number, v.text AS text
+        ORDER BY v.number
+        """
+        result = session.run(query, book_name=book_name, chapter_number=chapter_number)
+        verses = [{"verse": record["number"], "text": record["text"]} for record in result]
+        
+        if not verses:
+            raise HTTPException(status_code=404, detail="Livre ou chapitre introuvable")
+            
+        return {
+            "book": book_name,
+            "chapter": chapter_number,
+            "verses": verses
+        }
 
 @app.on_event("shutdown")
 def shutdown_db_client():

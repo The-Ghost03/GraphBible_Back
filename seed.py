@@ -19,7 +19,8 @@ def create_constraints():
 def seed_database():
     """Lire le JSON et envoyer les données à Neo4j"""
     print("Chargement du fichier JSON...")
-    with open("bible-fr.json", "r", encoding="utf-8") as f:
+    # CORRECTION ICI : utf-8-sig pour ignorer le BOM invisible
+    with open("bible-fr.json", "r", encoding="utf-8-sig") as f:
         data = json.load(f)
 
     with driver.session() as session:
@@ -46,18 +47,18 @@ def seed_database():
                         MERGE (b)-[:CONTAINS]->(c)
                     """, book_name=book_name, chapter_num=chapter_num)
                     
-                    # Préparer les versets pour une insertion en lot (Batch) pour plus de rapidité
+                    # 3. Préparer les versets
                     verses_batch = []
-                    for verse in chapter.get("Verses", []):
-                        # Le premier verset de ce JSON n'a parfois pas de champ 'ID', on force 1
-                        verse_num = verse.get("ID", 1) 
+                    for verse_idx, verse in enumerate(chapter.get("Verses", [])):
+                        # Si 'ID' n'existe pas (ex: verset 1), on prend l'index de la boucle + 1
+                        verse_num = verse.get("ID", verse_idx + 1) 
                         verse_text = verse.get("Text", "")
                         verses_batch.append({
                             "number": verse_num,
                             "text": verse_text
                         })
                         
-                    # 3. Créer les Versets et les lier au Chapitre
+                    # 4. Insérer les versets en lot (Batch)
                     session.run("""
                         MATCH (c:Chapter {book: $book_name, number: $chapter_num})
                         UNWIND $verses AS v_data
@@ -67,7 +68,7 @@ def seed_database():
                     """, book_name=book_name, chapter_num=chapter_num, verses=verses_batch)
 
 if __name__ == "__main__":
-    print("🚀 Initialisation de la base de données...")
+    print("🚀 Initialisation des index...")
     create_constraints()
     print("📖 Début de l'importation de la Bible (cela peut prendre quelques minutes)...")
     seed_database()
