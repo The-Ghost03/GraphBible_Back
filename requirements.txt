@@ -2,6 +2,6 @@ fastapi
 uvicorn
 neo4j
 pydantic[email]
-passlib[bcrypt]
+bcrypt
 python-jose[cryptography]
 python-multipart
