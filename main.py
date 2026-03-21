@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from database import get_db
-from routers import auth
+from routers import auth, graphs, nodes
 from routers import auth, graphs
 
 app = FastAPI(title="BibleGraph SaaS API", description="API complète pour le Knowledge Graph Biblique")
@@ -17,6 +17,7 @@ app.add_middleware(
 # Inclusion des routes d'authentification
 app.include_router(auth.router)
 app.include_router(graphs.router)
+app.include_router(nodes.router)
 
 @app.get("/")
 def read_root():
