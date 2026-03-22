@@ -8,6 +8,9 @@ import os
 import uuid
 import bcrypt
 from database import get_db
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -112,3 +115,51 @@ def login(user: UserLogin):
 
         token = create_access_token(data={"sub": record["u"]["email"], "id": record["u"]["id"]})
         return {"access_token": token, "token_type": "bearer"}
+
+
+def send_otp_email(email: str, otp: str):
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", 465))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+    from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
+
+    # Mode secours : Si le .env n'est pas bien configuré
+    if not smtp_host or not smtp_user or not smtp_pass:
+        print(f"⚠️ [MODE SIMULATION] OTP pour {email} : {otp}")
+        return
+
+    try:
+        # Création de l'e-mail
+        msg = MIMEMultipart()
+        msg['From'] = f"BibleGraph <{from_email}>"
+        msg['To'] = email
+        msg['Subject'] = "🔐 Votre code de connexion BibleGraph"
+
+        # Le corps de l'e-mail
+        body = f"""Bonjour,
+
+Voici votre code de sécurité pour vous connecter à votre espace BibleGraph :
+
+{otp}
+
+Ce code est valide pendant 10 minutes.
+
+À très vite sur votre espace d'étude !
+L'équipe BibleGraph."""
+
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        # Connexion au serveur SMTP de ton domaine
+        server = smtplib.SMTP(smtp_host, smtp_port)
+        server.starttls()  # Sécurise la connexion (TLS)
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+        server.quit()
+
+        print(f"✅ Vrai E-mail envoyé avec succès à {email} via {smtp_host}")
+
+    except Exception as e:
+        print(f"❌ Erreur lors de l'envoi de l'e-mail SMTP : {e}")
+        # En cas d'erreur réseau, on l'affiche quand même dans la console pour ne pas te bloquer
+        print(f"⚠️ [SECOURS] OTP pour {email} : {otp}")
