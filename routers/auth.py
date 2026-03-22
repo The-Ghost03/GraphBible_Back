@@ -11,6 +11,7 @@ from database import get_db
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from typing import Optional
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -26,16 +27,24 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
 
-
 class OTPVerify(BaseModel):
     email: EmailStr
     otp: str
-
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class UserProfileUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    birth_date: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+
+class PasswordUpdate(BaseModel):
+    current_password: str
+    new_password: str
 
 # --- HELPERS (FONCTIONS OUTILS) ---
 def get_password_hash(password: str) -> str:
@@ -169,3 +178,72 @@ def login(user: UserLogin):
 
         token = create_access_token(data={"sub": record["u"]["email"], "id": record["u"]["id"]})
         return {"access_token": token, "token_type": "bearer"}
+
+
+# --- ROUTES PROFIL UTILISATEUR ---
+
+@router.get("/me")
+def get_my_profile(current_user: dict = Depends(get_current_user)):
+    driver = get_db()
+    with driver.session() as session:
+        record = session.run("MATCH (u:User {id: $uid}) RETURN u", uid=current_user["id"]).single()
+        if not record:
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+        user_node = record["u"]
+        # On renvoie les infos (sauf le mot de passe bien sûr)
+        return {
+            "id": user_node.get("id"),
+            "email": user_node.get("email"),
+            "first_name": user_node.get("first_name", ""),
+            "last_name": user_node.get("last_name", ""),
+            "phone": user_node.get("phone", ""),
+            "birth_date": user_node.get("birth_date", ""),
+            "profile_picture_url": user_node.get("profile_picture_url", ""),
+            "role": user_node.get("role", "user"),
+            "created_at": user_node.get("created_at")
+        }
+
+
+@router.put("/me")
+def update_profile(profile_data: UserProfileUpdate, current_user: dict = Depends(get_current_user)):
+    driver = get_db()
+    with driver.session() as session:
+        # On met à jour uniquement les champs qui ont été envoyés
+        updates = {k: v for k, v in profile_data.dict(exclude_unset=True).items() if v is not None}
+
+        if updates:
+            query = "MATCH (u:User {id: $uid}) SET " + ", ".join([f"u.{k} = ${k}" for k in updates.keys()])
+            session.run(query, uid=current_user["id"], **updates)
+
+        return {"message": "Profil mis à jour avec succès"}
+
+
+@router.put("/me/password")
+def update_password(passwords: PasswordUpdate, current_user: dict = Depends(get_current_user)):
+    driver = get_db()
+    with driver.session() as session:
+        record = session.run("MATCH (u:User {id: $uid}) RETURN u", uid=current_user["id"]).single()
+        if not record or not verify_password(passwords.current_password, record["u"]["password_hash"]):
+            raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
+
+        new_hashed_pwd = get_password_hash(passwords.new_password)
+        session.run("MATCH (u:User {id: $uid}) SET u.password_hash = $new_pwd",
+                    uid=current_user["id"], new_pwd=new_hashed_pwd)
+
+        return {"message": "Mot de passe modifié avec succès"}
+
+
+@router.delete("/me")
+def delete_my_account(current_user: dict = Depends(get_current_user)):
+    driver = get_db()
+    with driver.session() as session:
+        # Suppression en cascade : Utilisateur -> Ses Graphes -> Les Noeuds des graphes
+        session.run("""
+        MATCH (u:User {id: $uid})
+        OPTIONAL MATCH (u)-[:OWNS]->(g:Graph)
+        OPTIONAL MATCH (g)-[:HAS_NODE]->(n:Node)
+        DETACH DELETE n, g, u
+        """, uid=current_user["id"])
+
+        return {"message": "Compte et données supprimés définitivement"}

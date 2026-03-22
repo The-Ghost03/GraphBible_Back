@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from database import get_db
+import uuid
+from database import get_db, close_db
 from routers import auth, graphs, nodes
 from routers import auth, graphs
+from routers.auth import get_password_hash
 
 app = FastAPI(title="BibleGraph SaaS API", description="API complète pour le Knowledge Graph Biblique")
 
@@ -45,6 +47,31 @@ def get_chapter(book_name: str, chapter_number: int):
             raise HTTPException(status_code=404, detail="Introuvable")
         return {"book": book_name, "chapter": chapter_number, "verses": verses}
 
-@app.on_event("shutdown")
-def shutdown_db_client():
-    get_db().close()
+
+@app.on_event("startup")
+def startup_db_client():
+    driver = get_db()
+    try:
+        driver.verify_connectivity()
+        print("✅ Connecté à Neo4j avec succès !")
+
+        # --- CRÉATION DU SUPER ADMIN AUTOMATIQUE ---
+        with driver.session() as session:
+            admin_email = "admin@admin.com"
+            admin_check = session.run("MATCH (u:User {email: $email}) RETURN u", email=admin_email).single()
+
+            if not admin_check:
+                hashed_pwd = get_password_hash("password")
+                admin_id = str(uuid.uuid4())
+                session.run("""
+                CREATE (u:User {
+                    id: $id, email: $email, password_hash: $pwd, 
+                    is_verified: true, role: 'superadmin', 
+                    first_name: 'Super', last_name: 'Admin',
+                    created_at: datetime()
+                })
+                """, id=admin_id, email=admin_email, pwd=hashed_pwd)
+                print("👑 Compte Super Admin généré (admin@admin.com / password)")
+
+    except Exception as e:
+        print(f"❌ Erreur de connexion à Neo4j : {e}")
