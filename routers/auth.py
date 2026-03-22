@@ -21,6 +21,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 
+# --- SCHÉMAS ---
 class UserCreate(BaseModel):
     email: EmailStr
     password: str
@@ -36,6 +37,7 @@ class UserLogin(BaseModel):
     password: str
 
 
+# --- HELPERS (FONCTIONS OUTILS) ---
 def get_password_hash(password: str) -> str:
     pwd_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
@@ -56,7 +58,6 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-# --- LA FONCTION QU'IL TE MANQUAIT (LE VIDEUR) ---
 def get_current_user(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(status_code=401, detail="Token invalide ou expiré")
     try:
@@ -70,6 +71,51 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
 
 
+def send_otp_email(email: str, otp: str):
+    smtp_host = os.getenv("SMTP_HOST")
+    # ⚠️ Attention: Si tu utilises starttls(), le port standard est 587, pas 465.
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+    from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
+
+    if not smtp_host or not smtp_user or not smtp_pass:
+        print(f"⚠️ [MODE SIMULATION] OTP pour {email} : {otp}")
+        return
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"BibleGraph <{from_email}>"
+        msg['To'] = email
+        msg['Subject'] = "🔐 Votre code de connexion BibleGraph"
+
+        body = f"""Bonjour,
+
+Voici votre code de sécurité pour vous connecter à votre espace BibleGraph :
+
+{otp}
+
+Ce code est valide pendant 10 minutes.
+
+À très vite sur votre espace d'étude !
+L'équipe BibleGraph."""
+
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        server = smtplib.SMTP(smtp_host, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+        server.quit()
+
+        print(f"✅ Vrai E-mail envoyé avec succès à {email} via {smtp_host}")
+
+    except Exception as e:
+        print(f"❌ Erreur lors de l'envoi de l'e-mail SMTP : {e}")
+        print(f"⚠️ [SECOURS] OTP pour {email} : {otp}")
+
+
+# --- ROUTES ---
 @router.post("/register")
 def register_user(user: UserCreate):
     driver = get_db()
@@ -87,52 +133,11 @@ def register_user(user: UserCreate):
         })
         """, id=user_id, email=user.email, pwd=hashed_pwd, otp=otp)
 
-    def send_otp_email(email: str, otp: str):
-        smtp_host = os.getenv("SMTP_HOST")
-        smtp_port = int(os.getenv("SMTP_PORT", 465))
-        smtp_user = os.getenv("SMTP_USER")
-        smtp_pass = os.getenv("SMTP_PASSWORD")
-        from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
+    # 🚀 C'EST ICI QU'ON APPELLE ENFIN LA FONCTION !
+    send_otp_email(user.email, otp)
 
-        # Mode secours : Si le .env n'est pas bien configuré
-        if not smtp_host or not smtp_user or not smtp_pass:
-            print(f"⚠️ [MODE SIMULATION] OTP pour {email} : {otp}")
-            return
-
-        try:
-            # Création de l'e-mail
-            msg = MIMEMultipart()
-            msg['From'] = f"BibleGraph <{from_email}>"
-            msg['To'] = email
-            msg['Subject'] = "🔐 Votre code de connexion BibleGraph"
-
-            # Le corps de l'e-mail
-            body = f"""Bonjour,
-
-    Voici votre code de sécurité pour vous connecter à votre espace BibleGraph :
-
-    {otp}
-
-    Ce code est valide pendant 10 minutes.
-
-    À très vite sur votre espace d'étude !
-    L'équipe BibleGraph."""
-
-            msg.attach(MIMEText(body, 'plain', 'utf-8'))
-
-            # Connexion au serveur SMTP de ton domaine
-            server = smtplib.SMTP(smtp_host, smtp_port)
-            server.starttls()  # Sécurise la connexion (TLS)
-            server.login(smtp_user, smtp_pass)
-            server.send_message(msg)
-            server.quit()
-
-            print(f"✅ Vrai E-mail envoyé avec succès à {email} via {smtp_host}")
-
-        except Exception as e:
-            print(f"❌ Erreur lors de l'envoi de l'e-mail SMTP : {e}")
-            # En cas d'erreur réseau, on l'affiche quand même dans la console pour ne pas te bloquer
-            print(f"⚠️ [SECOURS] OTP pour {email} : {otp}")
+    # 🚀 ET IL NE FAUT PAS OUBLIER DE RÉPONDRE AU FRONTEND
+    return {"message": "Utilisateur créé. Un email contenant votre code OTP a été envoyé."}
 
 
 @router.post("/verify-otp")
