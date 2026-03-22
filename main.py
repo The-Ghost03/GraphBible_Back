@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
-from database import get_db, close_db
+
+# 🚀 CORRECTION ICI : On retire 'close_db' qui n'existe pas
+from database import get_db
+# 🚀 CORRECTION ICI : J'ai retiré le doublon d'importation
 from routers import auth, graphs, nodes
-from routers import auth, graphs
 from routers.auth import get_password_hash
 
 app = FastAPI(title="BibleGraph SaaS API", description="API complète pour le Knowledge Graph Biblique")
@@ -16,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Inclusion des routes d'authentification
+# Inclusion des routes
 app.include_router(auth.router)
 app.include_router(graphs.router)
 app.include_router(nodes.router)
