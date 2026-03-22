@@ -73,14 +73,13 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 def send_otp_email(email: str, otp: str):
     smtp_host = os.getenv("SMTP_HOST")
-    # ⚠️ Attention: Si tu utilises starttls(), le port standard est 587, pas 465.
     smtp_port = int(os.getenv("SMTP_PORT", 465))
     smtp_user = os.getenv("SMTP_USER")
     smtp_pass = os.getenv("SMTP_PASSWORD")
     from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
 
     if not smtp_host or not smtp_user or not smtp_pass:
-        print(f"⚠️ [MODE SIMULATION] OTP pour {email} : {otp}")
+        print(f"⚠️ [MODE SIMULATION] OTP pour {email} : {otp}", flush=True)
         return
 
     try:
@@ -102,18 +101,24 @@ L'équipe BibleGraph."""
 
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-        server = smtplib.SMTP(smtp_host, smtp_port)
-        server.starttls()
+        print(f"⏳ Tentative de connexion SMTP à {smtp_host} sur le port {smtp_port}...", flush=True)
+
+        # 🚀 LA CORRECTION EST ICI : 465 = SSL, les autres = TLS
+        if smtp_port == 465:
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port)
+            server.starttls()
+
         server.login(smtp_user, smtp_pass)
         server.send_message(msg)
         server.quit()
 
-        print(f"✅ Vrai E-mail envoyé avec succès à {email} via {smtp_host}")
+        print(f"✅ Vrai E-mail envoyé avec succès à {email} via {smtp_host}", flush=True)
 
     except Exception as e:
-        print(f"❌ Erreur lors de l'envoi de l'e-mail SMTP : {e}")
-        print(f"⚠️ [SECOURS] OTP pour {email} : {otp}")
-
+        print(f"❌ Erreur CRITIQUE lors de l'envoi SMTP : {e}", flush=True)
+        print(f"⚠️ [SECOURS] OTP pour {email} : {otp}", flush=True)
 
 # --- ROUTES ---
 @router.post("/register")
