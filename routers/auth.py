@@ -74,7 +74,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 def send_otp_email(email: str, otp: str):
     smtp_host = os.getenv("SMTP_HOST")
     # ⚠️ Attention: Si tu utilises starttls(), le port standard est 587, pas 465.
-    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_port = int(os.getenv("SMTP_PORT", 465))
     smtp_user = os.getenv("SMTP_USER")
     smtp_pass = os.getenv("SMTP_PASSWORD")
     from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
