@@ -34,6 +34,22 @@ def get_books():
         result = session.run("MATCH (b:Book) RETURN b.name AS name, b.testament AS testament")
         return {"books": [{"name": record["name"], "testament": record["testament"]} for record in result]}
 
+
+@app.get("/books/{book_name}/metadata")
+def get_book_metadata(book_name: str):
+    """Récupère tous les chapitres d'un livre et le nombre max de versets pour chacun"""
+    driver = get_db()
+    with driver.session() as session:
+        query = """
+        MATCH (c:Chapter {book: $book_name})-[:CONTAINS]->(v:Verse)
+        RETURN c.number AS chapter, max(toInteger(v.number)) AS max_verses
+        ORDER BY toInteger(c.number)
+        """
+        result = session.run(query, book_name=book_name)
+        data = [{"chapter": record["chapter"], "max_verses": record["max_verses"]} for record in result]
+        return {"metadata": data}
+
+    
 @app.get("/chapter/{book_name}/{chapter_number}")
 def get_chapter(book_name: str, chapter_number: int):
     driver = get_db()
