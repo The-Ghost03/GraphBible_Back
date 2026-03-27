@@ -17,6 +17,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key-biblegraph-2026")
 ALGORITHM = "HS256"
+# 🚀 Durée de session ajustée à 2 heures (120 minutes)
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -27,13 +28,16 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
 
+
 class OTPVerify(BaseModel):
     email: EmailStr
     otp: str
 
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class UserProfileUpdate(BaseModel):
     first_name: Optional[str] = None
@@ -42,9 +46,22 @@ class UserProfileUpdate(BaseModel):
     birth_date: Optional[str] = None
     profile_picture_url: Optional[str] = None
 
+
 class PasswordUpdate(BaseModel):
     current_password: str
     new_password: str
+
+
+# 🚀 NOUVEAUX SCHÉMAS POUR LE MOT DE PASSE OUBLIÉ
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    otp: str
+    new_password: str
+
 
 # --- HELPERS (FONCTIONS OUTILS) ---
 def get_password_hash(password: str) -> str:
@@ -110,9 +127,6 @@ L'équipe BibleGraph."""
 
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-        print(f"⏳ Tentative de connexion SMTP à {smtp_host} sur le port {smtp_port}...", flush=True)
-
-        # 🚀 LA CORRECTION EST ICI : 465 = SSL, les autres = TLS
         if smtp_port == 465:
             server = smtplib.SMTP_SSL(smtp_host, smtp_port)
         else:
@@ -128,6 +142,54 @@ L'équipe BibleGraph."""
     except Exception as e:
         print(f"❌ Erreur CRITIQUE lors de l'envoi SMTP : {e}", flush=True)
         print(f"⚠️ [SECOURS] OTP pour {email} : {otp}", flush=True)
+
+
+# 🚀 NOUVELLE FONCTION D'ENVOI D'E-MAIL DE RÉINITIALISATION
+def send_reset_password_email(email: str, otp: str):
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", 465))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+    from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
+
+    if not smtp_host or not smtp_user or not smtp_pass:
+        print(f"⚠️ [MODE SIMULATION] Reset Password OTP pour {email} : {otp}", flush=True)
+        return
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"BibleGraph <{from_email}>"
+        msg['To'] = email
+        msg['Subject'] = "🔒 Réinitialisation de votre mot de passe BibleGraph"
+
+        body = f"""Bonjour,
+
+Nous avons reçu une demande de réinitialisation de mot de passe pour votre compte BibleGraph.
+Voici votre code de vérification à 6 chiffres :
+
+{otp}
+
+Si vous n'avez pas demandé cette réinitialisation, vous pouvez ignorer cet e-mail en toute sécurité.
+
+L'équipe BibleGraph."""
+
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        if smtp_port == 465:
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port)
+            server.starttls()
+
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+        server.quit()
+        print(f"✅ E-mail de réinitialisation envoyé avec succès à {email}", flush=True)
+
+    except Exception as e:
+        print(f"❌ Erreur lors de l'envoi SMTP (Reset) : {e}", flush=True)
+        print(f"⚠️ [SECOURS] Reset OTP pour {email} : {otp}", flush=True)
+
 
 # --- ROUTES ---
 @router.post("/register")
@@ -147,10 +209,7 @@ def register_user(user: UserCreate):
         })
         """, id=user_id, email=user.email, pwd=hashed_pwd, otp=otp)
 
-    # 🚀 C'EST ICI QU'ON APPELLE ENFIN LA FONCTION !
     send_otp_email(user.email, otp)
-
-    # 🚀 ET IL NE FAUT PAS OUBLIER DE RÉPONDRE AU FRONTEND
     return {"message": "Utilisateur créé. Un email contenant votre code OTP a été envoyé."}
 
 
@@ -180,6 +239,42 @@ def login(user: UserLogin):
         return {"access_token": token, "token_type": "bearer"}
 
 
+# 🚀 NOUVELLES ROUTES : MOT DE PASSE OUBLIÉ
+@router.post("/forgot-password")
+def forgot_password(request: ForgotPasswordRequest):
+    driver = get_db()
+    with driver.session() as session:
+        user = session.run("MATCH (u:User {email: $email}) RETURN u", email=request.email).single()
+
+        # On renvoie toujours le même message pour ne pas fuiter l'existence d'un compte
+        if not user:
+            return {"message": "Si cet e-mail est associé à un compte, un code vous a été envoyé."}
+
+        otp = str(random.randint(100000, 999999))
+        session.run("MATCH (u:User {email: $email}) SET u.otp = $otp", email=request.email, otp=otp)
+
+    send_reset_password_email(request.email, otp)
+    return {"message": "Si cet e-mail est associé à un compte, un code vous a été envoyé."}
+
+
+@router.post("/reset-password")
+def reset_password(request: ResetPasswordRequest):
+    driver = get_db()
+    with driver.session() as session:
+        record = session.run("MATCH (u:User {email: $email}) RETURN u.otp AS otp", email=request.email).single()
+
+        if not record or record["otp"] != request.otp:
+            raise HTTPException(status_code=400, detail="Code de vérification invalide ou expiré.")
+
+        hashed_pwd = get_password_hash(request.new_password)
+        session.run("""
+        MATCH (u:User {email: $email}) 
+        SET u.password_hash = $pwd, u.otp = null
+        """, email=request.email, pwd=hashed_pwd)
+
+    return {"message": "Votre mot de passe a été réinitialisé avec succès. Vous pouvez vous connecter."}
+
+
 # --- ROUTES PROFIL UTILISATEUR ---
 
 @router.get("/me")
@@ -191,7 +286,6 @@ def get_my_profile(current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=404, detail="Utilisateur introuvable")
 
         user_node = record["u"]
-        # On renvoie les infos (sauf le mot de passe bien sûr)
         return {
             "id": user_node.get("id"),
             "email": user_node.get("email"),
@@ -209,7 +303,6 @@ def get_my_profile(current_user: dict = Depends(get_current_user)):
 def update_profile(profile_data: UserProfileUpdate, current_user: dict = Depends(get_current_user)):
     driver = get_db()
     with driver.session() as session:
-        # On met à jour uniquement les champs qui ont été envoyés
         updates = {k: v for k, v in profile_data.dict(exclude_unset=True).items() if v is not None}
 
         if updates:
@@ -238,7 +331,6 @@ def update_password(passwords: PasswordUpdate, current_user: dict = Depends(get_
 def delete_my_account(current_user: dict = Depends(get_current_user)):
     driver = get_db()
     with driver.session() as session:
-        # Suppression en cascade : Utilisateur -> Ses Graphes -> Les Noeuds des graphes
         session.run("""
         MATCH (u:User {id: $uid})
         OPTIONAL MATCH (u)-[:OWNS]->(g:Graph)
