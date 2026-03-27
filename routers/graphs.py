@@ -42,6 +42,7 @@ class RFEdge(BaseModel):
     # 🚀 NOUVEAU : Propriétés pour interagir avec les liens
     label: Optional[str] = ""
     notes: Optional[str] = ""
+    data: Optional[Dict[str, Any]] = None
 
 
 class GraphData(BaseModel):
@@ -229,3 +230,22 @@ def get_graph_data(graph_id: str, current_user: dict = Depends(get_current_user)
         ]
 
         return {"graph": graph_info, "nodes": nodes, "edges": edges}
+
+@router.delete("/{graph_id}")
+def delete_graph(graph_id: str, current_user: dict = Depends(get_current_user)):
+    """Supprime définitivement une étude et tout son contenu"""
+    driver = get_db()
+    with driver.session() as session:
+        check = session.run("MATCH (u:User {id: $uid})-[:OWNS]->(g:Graph {id: $gid}) RETURN g",
+                            uid=current_user["id"], gid=graph_id).single()
+        if not check:
+            raise HTTPException(status_code=403, detail="Accès refusé.")
+
+        # Supprime les noeuds liés au graphe, puis le graphe lui-même
+        session.run("""
+        MATCH (g:Graph {id: $gid})
+        OPTIONAL MATCH (g)-[:HAS_NODE]->(n:Node)
+        DETACH DELETE n, g
+        """, gid=graph_id)
+
+        return {"message": "Étude supprimée avec succès"}
