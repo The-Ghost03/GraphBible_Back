@@ -12,7 +12,12 @@ app = FastAPI(title="BibleGraph SaaS API", description="API complète pour le Kn
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://biblegraphe.softskills.ci",
+        "http://biblegraphe.softskills.ci",
+        "http://161.97.105.109:5173",
+        "http://localhost:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,7 +54,6 @@ def get_book_metadata(book_name: str):
         data = [{"chapter": record["chapter"], "max_verses": record["max_verses"]} for record in result]
         return {"metadata": data}
 
-    
 @app.get("/chapter/{book_name}/{chapter_number}")
 def get_chapter(book_name: str, chapter_number: int):
     driver = get_db()
