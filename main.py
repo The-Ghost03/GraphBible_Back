@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
 
+from routers import auth, graphs, nodes, admin
 # 🚀 CORRECTION ICI : On retire 'close_db' qui n'existe pas
 from database import get_db
 # 🚀 CORRECTION ICI : J'ai retiré le doublon d'importation
@@ -27,6 +28,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(graphs.router)
 app.include_router(nodes.router)
+app.include_router(admin.router)
 
 @app.get("/")
 def read_root():
