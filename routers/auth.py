@@ -230,16 +230,25 @@ def login(user: UserLogin):
     driver = get_db()
     with driver.session() as session:
         record = session.run("MATCH (u:User {email: $email}) RETURN u", email=user.email).single()
+
         if not record or not verify_password(user.password, record["u"]["password_hash"]):
             raise HTTPException(status_code=400, detail="Email ou mot de passe incorrect")
+
+        # 🚀 VÉRIFICATION DU BANNISSEMENT
+        if record["u"].get("is_banned", False):
+            raise HTTPException(status_code=403, detail="Ce compte a été suspendu par un administrateur.")
+
         if not record["u"]["is_verified"]:
             otp = str(random.randint(100000, 999999))
             session.run("MATCH (u:User {email: $email}) SET u.otp = $otp", email=user.email, otp=otp)
             send_otp_email(user.email, otp)
             raise HTTPException(status_code=403, detail="Compte non vérifié. Un nouveau code a été envoyé.")
+
+        # 🚀 ENREGISTREMENT DE LA DERNIÈRE CONNEXION
+        session.run("MATCH (u:User {email: $email}) SET u.last_login = datetime()", email=user.email)
+
         token = create_access_token(data={"sub": record["u"]["email"], "id": record["u"]["id"]})
         return {"access_token": token, "token_type": "bearer"}
-
 
 # 🚀 NOUVELLES ROUTES : MOT DE PASSE OUBLIÉ
 @router.post("/forgot-password")
