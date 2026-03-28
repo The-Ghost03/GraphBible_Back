@@ -35,6 +35,7 @@ class TopUser(BaseModel):
 
 
 class AnalyticsData(BaseModel):
+    total_nodes: int  # 🚀 NOUVEAU : On réintègre le total absolu
     active_users_daily: int
     stickiness: float
     retention_rate_w1: float
@@ -68,6 +69,9 @@ def get_advanced_analytics(admin: dict = Depends(get_current_admin)):
     date_aggregation = defaultdict(lambda: {"regs": 0, "logins": 0, "graphs": 0, "nodes": 0})
 
     with driver.session() as session:
+        # 🚀 NOUVEAU : Compte de tous les noeuds de la base
+        total_nodes = session.run("MATCH (g:Graph)-[:HAS_NODE]->(n) RETURN count(n) AS count").single()["count"]
+
         # DAU & MAU
         dau = session.run("MATCH (u:User) WHERE u.last_login > datetime($time) RETURN count(u) AS count",
                           time=one_day_ago.isoformat()).single()["count"]
@@ -88,7 +92,6 @@ def get_advanced_analytics(admin: dict = Depends(get_current_admin)):
                                     t7=seven_days_ago.isoformat()).single()
 
         retention_w1 = 0.0
-        # 🚀 FIX DU TypeError: On s'assure que retention_res n'est pas None
         if retention_res and retention_res["total_cohort"] > 0:
             retention_w1 = round((retention_res["returned_cohort"] / retention_res["total_cohort"] * 100), 1)
 
@@ -128,6 +131,7 @@ def get_advanced_analytics(admin: dict = Depends(get_current_admin)):
             thirty=thirty_days_ago.isoformat())]
 
         return AnalyticsData(
+            total_nodes=total_nodes,  # 🚀 NOUVEAU
             active_users_daily=dau, stickiness=stickiness, retention_rate_w1=retention_w1,
             avg_nodes_per_graph=avg_nodes,
             registration_trend=registration_trend,
