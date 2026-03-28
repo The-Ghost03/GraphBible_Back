@@ -233,8 +233,10 @@ def login(user: UserLogin):
         if not record or not verify_password(user.password, record["u"]["password_hash"]):
             raise HTTPException(status_code=400, detail="Email ou mot de passe incorrect")
         if not record["u"]["is_verified"]:
-            raise HTTPException(status_code=403, detail="Vérifiez votre compte d'abord")
-
+            otp = str(random.randint(100000, 999999))
+            session.run("MATCH (u:User {email: $email}) SET u.otp = $otp", email=user.email, otp=otp)
+            send_otp_email(user.email, otp)
+            raise HTTPException(status_code=403, detail="Compte non vérifié. Un nouveau code a été envoyé.")
         token = create_access_token(data={"sub": record["u"]["email"], "id": record["u"]["id"]})
         return {"access_token": token, "token_type": "bearer"}
 
