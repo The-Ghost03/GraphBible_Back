@@ -46,7 +46,7 @@ def get_all_users(admin: dict = Depends(get_current_admin)):
             u.is_verified AS is_verified,
             toString(u.created_at) AS created_at,
             count(g) AS total_graphs
-        ORDER BY u.created_at DESC
+        ORDER BY created_at DESC
         """
         result = session.run(query)
         users = [dict(record) for record in result]
