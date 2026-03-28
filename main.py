@@ -24,6 +24,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import os
+from fastapi.staticfiles import StaticFiles
+
+# On s'assure que le dossier existe
+os.makedirs("static/uploads", exist_ok=True)
+# On dit à FastAPI de servir ce dossier publiquement
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
 # Inclusion des routes
 app.include_router(auth.router)
 app.include_router(graphs.router)
