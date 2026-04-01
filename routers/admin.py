@@ -147,31 +147,11 @@ def get_advanced_analytics(admin: dict = Depends(get_current_admin)):
 # --- ROUTES USERS ---
 
 @router.get("/users")
-def get_all_users(
-        skip: int = 0,
-        limit: int = 10,
-        search: Optional[str] = None,
-        admin: dict = Depends(get_current_admin)
-):
+def get_all_users(admin: dict = Depends(get_current_admin)):
     driver = get_db()
     with driver.session() as session:
-        # 1. Requête de base pour récupérer les utilisateurs
-        match_clause = "MATCH (u:User)"
-        where_clause = ""
-        params = {"skip": skip, "limit": limit}
-
-        # Si une recherche est demandée, on filtre sur l'email, le nom ou le prénom
-        if search:
-            where_clause = " WHERE toLower(u.email) CONTAINS toLower($search) OR toLower(u.first_name) CONTAINS toLower($search) OR toLower(u.last_name) CONTAINS toLower($search)"
-            params["search"] = search
-
-        # 2. On compte le total d'utilisateurs (pour la pagination)
-        count_query = f"{match_clause}{where_clause} RETURN count(u) as total"
-        total_users = session.run(count_query, **params).single()["total"]
-
-        # 3. On récupère les utilisateurs avec pagination
-        query = f"""
-        {match_clause}{where_clause}
+        query = """
+        MATCH (u:User)
         OPTIONAL MATCH (u)-[:OWNS]->(g:Graph)
         RETURN 
             u.id AS id, u.email AS email, u.first_name AS first_name, u.last_name AS last_name, 
@@ -179,19 +159,9 @@ def get_all_users(
             toString(u.last_login) AS last_login, toString(u.created_at) AS created_at,
             count(g) AS total_graphs
         ORDER BY created_at DESC
-        SKIP $skip LIMIT $limit
         """
-
-        result = session.run(query, **params)
-        users = [dict(record) for record in result]
-
-        # On renvoie les utilisateurs ET le total pour que le front sache combien de pages il y a
-        return {
-            "users": users,
-            "total": total_users,
-            "skip": skip,
-            "limit": limit
-        }
+        result = session.run(query)
+        return {"users": [dict(record) for record in result]}
 
 @router.put("/users/{user_id}/ban")
 def toggle_ban_user(user_id: str, admin: dict = Depends(get_current_admin)):
