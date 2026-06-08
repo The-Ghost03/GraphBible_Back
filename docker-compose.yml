@@ -26,11 +26,11 @@ services:
       - neo4j_data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "neo4j", "status"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7474"]
       interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
 
 volumes:
   neo4j_data:
