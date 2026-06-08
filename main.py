@@ -3,10 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uuid
 
 from routers import auth, graphs, nodes, admin
-# 🚀 CORRECTION ICI : On retire 'close_db' qui n'existe pas
 from database import get_db
-# 🚀 CORRECTION ICI : J'ai retiré le doublon d'importation
-from routers import auth, graphs, nodes
 from routers.auth import get_password_hash
 
 app = FastAPI(title="BibleGraph SaaS API", description="API complète pour le Knowledge Graph Biblique")
@@ -27,13 +24,9 @@ app.add_middleware(
 import os
 from fastapi.staticfiles import StaticFiles
 
-# On s'assure que le dossier existe
 os.makedirs("static/uploads", exist_ok=True)
-# On dit à FastAPI de servir ce dossier publiquement
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
-# Inclusion des routes
 app.include_router(auth.router)
 app.include_router(graphs.router)
 app.include_router(nodes.router)
@@ -53,7 +46,6 @@ def get_books():
 
 @app.get("/books/{book_name}/metadata")
 def get_book_metadata(book_name: str):
-    """Récupère tous les chapitres d'un livre et le nombre max de versets pour chacun"""
     driver = get_db()
     with driver.session() as session:
         query = """
@@ -88,23 +80,25 @@ def startup_db_client():
         driver.verify_connectivity()
         print("✅ Connecté à Neo4j avec succès !")
 
-        # --- CRÉATION DU SUPER ADMIN AUTOMATIQUE ---
-        with driver.session() as session:
-            admin_email = "admin@admin.com"
-            admin_check = session.run("MATCH (u:User {email: $email}) RETURN u", email=admin_email).single()
-
-            if not admin_check:
-                hashed_pwd = get_password_hash("password")
-                admin_id = str(uuid.uuid4())
-                session.run("""
-                CREATE (u:User {
-                    id: $id, email: $email, password_hash: $pwd, 
-                    is_verified: true, role: 'superadmin', 
-                    first_name: 'Super', last_name: 'Admin',
-                    created_at: datetime()
-                })
-                """, id=admin_id, email=admin_email, pwd=hashed_pwd)
-                print("👑 Compte Super Admin généré (admin@admin.com / password)")
+        admin_email = os.getenv("ADMIN_EMAIL")
+        admin_password = os.getenv("ADMIN_PASSWORD")
+        if not admin_email or not admin_password:
+            print("⚠️  ADMIN_EMAIL / ADMIN_PASSWORD non définis — compte superadmin non créé.")
+        else:
+            with driver.session() as session:
+                admin_check = session.run("MATCH (u:User {email: $email}) RETURN u", email=admin_email).single()
+                if not admin_check:
+                    hashed_pwd = get_password_hash(admin_password)
+                    admin_id = str(uuid.uuid4())
+                    session.run("""
+                    CREATE (u:User {
+                        id: $id, email: $email, password_hash: $pwd,
+                        is_verified: true, role: 'superadmin',
+                        first_name: 'Super', last_name: 'Admin',
+                        created_at: datetime()
+                    })
+                    """, id=admin_id, email=admin_email, pwd=hashed_pwd)
+                    print(f"👑 Compte Super Admin généré ({admin_email})")
 
     except Exception as e:
         print(f"❌ Erreur de connexion à Neo4j : {e}")

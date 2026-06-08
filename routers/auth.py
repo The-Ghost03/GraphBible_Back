@@ -15,10 +15,12 @@ from typing import Optional
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key-biblegraph-2026")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required")
 ALGORITHM = "HS256"
-# 🚀 Durée de session ajustée à 2 heures (120 minutes)
 ACCESS_TOKEN_EXPIRE_MINUTES = 120
+OTP_EXPIRE_MINUTES = 10
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -52,7 +54,6 @@ class PasswordUpdate(BaseModel):
     new_password: str
 
 
-# 🚀 NOUVEAUX SCHÉMAS POUR LE MOT DE PASSE OUBLIÉ
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -63,7 +64,7 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 
-# --- HELPERS (FONCTIONS OUTILS) ---
+# --- HELPERS ---
 def get_password_hash(password: str) -> str:
     pwd_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
@@ -95,6 +96,21 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         return {"email": email, "id": user_id}
     except JWTError:
         raise credentials_exception
+
+
+def _new_otp() -> tuple:
+    otp = str(random.randint(100000, 999999))
+    expires_at = (datetime.utcnow() + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
+    return otp, expires_at
+
+
+def _check_otp(stored_otp, stored_expires, provided: str) -> None:
+    if stored_otp != provided:
+        raise HTTPException(status_code=400, detail="Code invalide.")
+    if not stored_expires:
+        raise HTTPException(status_code=400, detail="Code expiré. Veuillez en demander un nouveau.")
+    if datetime.utcnow() > datetime.fromisoformat(stored_expires):
+        raise HTTPException(status_code=400, detail="Code expiré (10 min). Veuillez en demander un nouveau.")
 
 
 def send_otp_email(email: str, otp: str):
@@ -136,7 +152,6 @@ L'équipe BibleGraph."""
         server.login(smtp_user, smtp_pass)
         server.send_message(msg)
         server.quit()
-
         print(f"✅ Vrai E-mail envoyé avec succès à {email} via {smtp_host}", flush=True)
 
     except Exception as e:
@@ -144,7 +159,6 @@ L'équipe BibleGraph."""
         print(f"⚠️ [SECOURS] OTP pour {email} : {otp}", flush=True)
 
 
-# 🚀 NOUVELLE FONCTION D'ENVOI D'E-MAIL DE RÉINITIALISATION
 def send_reset_password_email(email: str, otp: str):
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = int(os.getenv("SMTP_PORT", 465))
@@ -168,6 +182,8 @@ Nous avons reçu une demande de réinitialisation de mot de passe pour votre com
 Voici votre code de vérification à 6 chiffres :
 
 {otp}
+
+Ce code est valide pendant 10 minutes.
 
 Si vous n'avez pas demandé cette réinitialisation, vous pouvez ignorer cet e-mail en toute sécurité.
 
@@ -200,14 +216,16 @@ def register_user(user: UserCreate):
             raise HTTPException(status_code=400, detail="Cet email est déjà utilisé")
 
         hashed_pwd = get_password_hash(user.password)
-        otp = str(random.randint(100000, 999999))
+        otp, expires_at = _new_otp()
         user_id = str(uuid.uuid4())
 
         session.run("""
         CREATE (u:User {
-            id: $id, email: $email, password_hash: $pwd, otp: $otp, is_verified: false, created_at: datetime()
+            id: $id, email: $email, password_hash: $pwd,
+            otp: $otp, otp_expires_at: $expires_at,
+            is_verified: false, created_at: datetime()
         })
-        """, id=user_id, email=user.email, pwd=hashed_pwd, otp=otp)
+        """, id=user_id, email=user.email, pwd=hashed_pwd, otp=otp, expires_at=expires_at)
 
     send_otp_email(user.email, otp)
     return {"message": "Utilisateur créé. Un email contenant votre code OTP a été envoyé."}
@@ -217,11 +235,15 @@ def register_user(user: UserCreate):
 def verify_otp(data: OTPVerify):
     driver = get_db()
     with driver.session() as session:
-        record = session.run("MATCH (u:User {email: $email}) RETURN u.otp AS otp, u.is_verified AS is_verified",
-                             email=data.email).single()
-        if not record or record["otp"] != data.otp:
-            raise HTTPException(status_code=400, detail="OTP invalide")
-        session.run("MATCH (u:User {email: $email}) SET u.is_verified = true, u.otp = null", email=data.email)
+        record = session.run(
+            "MATCH (u:User {email: $email}) RETURN u.otp AS otp, u.otp_expires_at AS expires_at",
+            email=data.email).single()
+        if not record:
+            raise HTTPException(status_code=400, detail="Code invalide.")
+        _check_otp(record["otp"], record["expires_at"], data.otp)
+        session.run(
+            "MATCH (u:User {email: $email}) SET u.is_verified = true, u.otp = null, u.otp_expires_at = null",
+            email=data.email)
         return {"message": "Compte vérifié !"}
 
 
@@ -234,35 +256,36 @@ def login(user: UserLogin):
         if not record or not verify_password(user.password, record["u"]["password_hash"]):
             raise HTTPException(status_code=400, detail="Email ou mot de passe incorrect")
 
-        # 🚀 VÉRIFICATION DU BANNISSEMENT
         if record["u"].get("is_banned", False):
             raise HTTPException(status_code=403, detail="Ce compte a été suspendu par un administrateur.")
 
         if not record["u"]["is_verified"]:
-            otp = str(random.randint(100000, 999999))
-            session.run("MATCH (u:User {email: $email}) SET u.otp = $otp", email=user.email, otp=otp)
+            otp, expires_at = _new_otp()
+            session.run(
+                "MATCH (u:User {email: $email}) SET u.otp = $otp, u.otp_expires_at = $expires_at",
+                email=user.email, otp=otp, expires_at=expires_at)
             send_otp_email(user.email, otp)
             raise HTTPException(status_code=403, detail="Compte non vérifié. Un nouveau code a été envoyé.")
 
-        # 🚀 ENREGISTREMENT DE LA DERNIÈRE CONNEXION
         session.run("MATCH (u:User {email: $email}) SET u.last_login = datetime()", email=user.email)
 
         token = create_access_token(data={"sub": record["u"]["email"], "id": record["u"]["id"]})
         return {"access_token": token, "token_type": "bearer"}
 
-# 🚀 NOUVELLES ROUTES : MOT DE PASSE OUBLIÉ
+
 @router.post("/forgot-password")
 def forgot_password(request: ForgotPasswordRequest):
     driver = get_db()
     with driver.session() as session:
         user = session.run("MATCH (u:User {email: $email}) RETURN u", email=request.email).single()
 
-        # On renvoie toujours le même message pour ne pas fuiter l'existence d'un compte
         if not user:
             return {"message": "Si cet e-mail est associé à un compte, un code vous a été envoyé."}
 
-        otp = str(random.randint(100000, 999999))
-        session.run("MATCH (u:User {email: $email}) SET u.otp = $otp", email=request.email, otp=otp)
+        otp, expires_at = _new_otp()
+        session.run(
+            "MATCH (u:User {email: $email}) SET u.otp = $otp, u.otp_expires_at = $expires_at",
+            email=request.email, otp=otp, expires_at=expires_at)
 
     send_reset_password_email(request.email, otp)
     return {"message": "Si cet e-mail est associé à un compte, un code vous a été envoyé."}
@@ -272,21 +295,24 @@ def forgot_password(request: ForgotPasswordRequest):
 def reset_password(request: ResetPasswordRequest):
     driver = get_db()
     with driver.session() as session:
-        record = session.run("MATCH (u:User {email: $email}) RETURN u.otp AS otp", email=request.email).single()
+        record = session.run(
+            "MATCH (u:User {email: $email}) RETURN u.otp AS otp, u.otp_expires_at AS expires_at",
+            email=request.email).single()
 
-        if not record or record["otp"] != request.otp:
+        if not record:
             raise HTTPException(status_code=400, detail="Code de vérification invalide ou expiré.")
+        _check_otp(record["otp"], record["expires_at"], request.otp)
 
         hashed_pwd = get_password_hash(request.new_password)
         session.run("""
-        MATCH (u:User {email: $email}) 
-        SET u.password_hash = $pwd, u.otp = null
+        MATCH (u:User {email: $email})
+        SET u.password_hash = $pwd, u.otp = null, u.otp_expires_at = null
         """, email=request.email, pwd=hashed_pwd)
 
     return {"message": "Votre mot de passe a été réinitialisé avec succès. Vous pouvez vous connecter."}
 
 
-# --- ROUTES PROFIL UTILISATEUR ---
+# --- ROUTES PROFIL ---
 
 @router.get("/me")
 def get_my_profile(current_user: dict = Depends(get_current_user)):
