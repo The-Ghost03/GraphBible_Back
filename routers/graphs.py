@@ -249,3 +249,83 @@ def delete_graph(graph_id: str, current_user: dict = Depends(get_current_user)):
         """, gid=graph_id)
 
         return {"message": "Étude supprimée avec succès"}
+
+@router.post("/{graph_id}/duplicate")
+def duplicate_graph(graph_id: str, current_user: dict = Depends(get_current_user)):
+    """Duplique une étude (métadonnées + nœuds + liens) avec de nouveaux IDs."""
+    driver = get_db()
+    with driver.session() as session:
+        # Vérification d'accès
+        check = session.run(
+            "MATCH (u:User {id: $uid})-[:OWNS]->(g:Graph {id: $gid}) RETURN g",
+            uid=current_user["id"], gid=graph_id).single()
+        if not check:
+            raise HTTPException(status_code=403, detail="Accès refusé.")
+
+        new_graph_id = str(uuid.uuid4())
+
+        # Dupliquer le graphe
+        session.run("""
+            MATCH (u:User {id: $uid})-[:OWNS]->(g:Graph {id: $gid})
+            CREATE (g2:Graph {
+                id: $new_id,
+                title: g.title + ' (Copie)',
+                description: g.description,
+                is_public: false,
+                thumbnail: g.thumbnail,
+                created_at: datetime(),
+                updated_at: datetime()
+            })
+            CREATE (u)-[:OWNS]->(g2)
+        """, uid=current_user["id"], gid=graph_id, new_id=new_graph_id)
+
+        # Récupérer les nœuds existants
+        nodes = session.run("""
+            MATCH (g:Graph {id: $gid})-[:HAS_NODE]->(n:Node)
+            RETURN n.id AS old_id, n.type AS type, n.pos_x AS pos_x,
+                   n.pos_y AS pos_y, n.data AS data, n.style AS style
+        """, gid=graph_id).data()
+
+        # Créer les nouveaux nœuds avec une map d'IDs
+        id_map = {}
+        for node in nodes:
+            new_node_id = str(uuid.uuid4())
+            id_map[node["old_id"]] = new_node_id
+            session.run("""
+                MATCH (g2:Graph {id: $new_gid})
+                CREATE (n:Node {
+                    id: $n_id, type: $n_type,
+                    pos_x: $pos_x, pos_y: $pos_y,
+                    data: $data, style: $style
+                })
+                CREATE (g2)-[:HAS_NODE]->(n)
+            """, new_gid=new_graph_id, n_id=new_node_id, n_type=node["type"],
+                       pos_x=node["pos_x"], pos_y=node["pos_y"],
+                       data=node["data"], style=node["style"] or "{}")
+
+        # Dupliquer les liens
+        edges = session.run("""
+            MATCH (g:Graph {id: $gid})-[:HAS_NODE]->(src:Node)-[r:LINKED_TO]->(tgt:Node)
+            RETURN src.id AS source_id, tgt.id AS target_id,
+                   r.animated AS animated, r.style AS style,
+                   r.label AS label, r.notes AS notes
+        """, gid=graph_id).data()
+
+        for edge in edges:
+            new_src = id_map.get(edge["source_id"])
+            new_tgt = id_map.get(edge["target_id"])
+            if new_src and new_tgt:
+                session.run("""
+                    MATCH (src:Node {id: $src_id}), (tgt:Node {id: $tgt_id})
+                    CREATE (src)-[:LINKED_TO {
+                        id: $e_id, animated: $animated,
+                        style: $style, label: $label, notes: $notes
+                    }]->(tgt)
+                """, src_id=new_src, tgt_id=new_tgt,
+                           e_id=str(uuid.uuid4()),
+                           animated=edge.get("animated", False),
+                           style=edge.get("style", "{}"),
+                           label=edge.get("label", ""),
+                           notes=edge.get("notes", ""))
+
+        return {"message": "Étude dupliquée avec succès", "graph_id": new_graph_id}

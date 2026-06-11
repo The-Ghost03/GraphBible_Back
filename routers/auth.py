@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
+from limiter import limiter
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
@@ -209,7 +210,8 @@ L'équipe BibleGraph."""
 
 # --- ROUTES ---
 @router.post("/register")
-def register_user(user: UserCreate):
+@limiter.limit("5/minute")
+def register_user(request: Request, user: UserCreate):
     driver = get_db()
     with driver.session() as session:
         if session.run("MATCH (u:User {email: $email}) RETURN u", email=user.email).single():
@@ -248,7 +250,8 @@ def verify_otp(data: OTPVerify):
 
 
 @router.post("/login")
-def login(user: UserLogin):
+@limiter.limit("10/minute")
+def login(request: Request, user: UserLogin):
     driver = get_db()
     with driver.session() as session:
         record = session.run("MATCH (u:User {email: $email}) RETURN u", email=user.email).single()
@@ -274,7 +277,8 @@ def login(user: UserLogin):
 
 
 @router.post("/forgot-password")
-def forgot_password(request: ForgotPasswordRequest):
+@limiter.limit("5/minute")
+def forgot_password(http_request: Request, request: ForgotPasswordRequest):
     driver = get_db()
     with driver.session() as session:
         user = session.run("MATCH (u:User {email: $email}) RETURN u", email=request.email).single()
